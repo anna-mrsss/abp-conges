@@ -694,9 +694,15 @@ function EmployeesPanel() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [busy, setBusy] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(null);
+  const [deleteError, setDeleteError] = useState("");
+
+  function loadEmployees() {
+    return api.listEmployees().then((res) => setEmployees(res.employees));
+  }
 
   useEffect(() => {
-    api.listEmployees().then((res) => setEmployees(res.employees)).finally(() => setLoading(false));
+    loadEmployees().finally(() => setLoading(false));
   }, []);
 
   async function handleReset() {
@@ -721,36 +727,90 @@ function EmployeesPanel() {
     }
   }
 
+  async function handleDelete(email) {
+    setDeleteError("");
+    try {
+      await api.deleteEmployee(email);
+      setConfirmingDelete(null);
+      if (selected === email) setSelected("");
+      await loadEmployees();
+    } catch (e) {
+      setDeleteError(e.message);
+    }
+  }
+
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-6 max-w-xl">
-      <h2 className="font-bold text-blue-900 mb-2">Réinitialiser le mot de passe d'un salarié</h2>
-      <p className="text-sm text-slate-500 mb-4">
-        À utiliser si un salarié ne peut pas récupérer son compte lui-même (e-mail de réinitialisation non configuré, ou boîte mail inaccessible).
-      </p>
-      {loading ? (
-        <p className="text-slate-400 text-sm">Chargement…</p>
-      ) : (
-        <div className="space-y-3">
-          <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-1">Salarié</label>
-            <select value={selected} onChange={(e) => setSelected(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600">
-              <option value="">— Choisir —</option>
-              {employees.map((e) => (
-                <option key={e.email} value={e.email}>{e.prenom} {e.nom} ({e.email})</option>
-              ))}
-            </select>
+    <div className="grid md:grid-cols-2 gap-6">
+      <div className="bg-white rounded-xl border border-slate-200 p-6">
+        <h2 className="font-bold text-blue-900 mb-2">Réinitialiser le mot de passe d'un salarié</h2>
+        <p className="text-sm text-slate-500 mb-4">
+          À utiliser si un salarié ne peut pas récupérer son compte lui-même (e-mail de réinitialisation non configuré, ou boîte mail inaccessible).
+        </p>
+        {loading ? (
+          <p className="text-slate-400 text-sm">Chargement…</p>
+        ) : (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Salarié</label>
+              <select value={selected} onChange={(e) => setSelected(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600">
+                <option value="">— Choisir —</option>
+                {employees.map((e) => (
+                  <option key={e.email} value={e.email}>{e.prenom} {e.nom} ({e.email})</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Nouveau mot de passe</label>
+              <input type="text" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600" />
+            </div>
+            {error && <p className="text-red-600 text-xs">{error}</p>}
+            {success && <p className="text-green-700 text-xs">{success}</p>}
+            <button disabled={busy} onClick={handleReset} className="bg-blue-900 hover:bg-blue-800 text-white font-semibold px-4 py-2 rounded-lg text-sm disabled:opacity-60">
+              {busy ? "Réinitialisation…" : "Réinitialiser le mot de passe"}
+            </button>
           </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-1">Nouveau mot de passe</label>
-            <input type="text" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600" />
-          </div>
-          {error && <p className="text-red-600 text-xs">{error}</p>}
-          {success && <p className="text-green-700 text-xs">{success}</p>}
-          <button disabled={busy} onClick={handleReset} className="bg-blue-900 hover:bg-blue-800 text-white font-semibold px-4 py-2 rounded-lg text-sm disabled:opacity-60">
-            {busy ? "Réinitialisation…" : "Réinitialiser le mot de passe"}
-          </button>
-        </div>
-      )}
+        )}
+      </div>
+
+      <div className="bg-white rounded-xl border border-slate-200 p-6">
+        <h2 className="font-bold text-blue-900 mb-2">Comptes salariés</h2>
+        <p className="text-sm text-slate-500 mb-4">
+          Supprimer un compte (utile pour retirer un compte de test) efface aussi toutes ses demandes de congé. Cette action est irréversible.
+        </p>
+        {deleteError && <p className="text-red-600 text-xs mb-3">{deleteError}</p>}
+        {loading ? (
+          <p className="text-slate-400 text-sm">Chargement…</p>
+        ) : employees.length === 0 ? (
+          <p className="text-slate-400 text-sm">Aucun compte salarié pour le moment.</p>
+        ) : (
+          <ul className="space-y-2">
+            {employees.map((e) => (
+              <li key={e.email} className="bg-slate-50 rounded-lg px-3 py-2">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm">
+                    <span className="font-semibold">{e.prenom} {e.nom}</span>{" "}
+                    <span className="text-slate-400">({e.email})</span>
+                  </span>
+                  {confirmingDelete !== e.email && (
+                    <button onClick={() => setConfirmingDelete(e.email)} className="text-xs text-red-600 hover:text-red-700 font-semibold shrink-0">
+                      Supprimer
+                    </button>
+                  )}
+                </div>
+                {confirmingDelete === e.email && (
+                  <div className="mt-2 bg-red-50 border border-red-300 rounded-lg px-3 py-2 flex items-center justify-between gap-3 flex-wrap">
+                    <p className="text-xs text-red-700">Supprimer définitivement ce compte et toutes ses demandes ?</p>
+                    <div className="flex gap-2">
+                      <button onClick={() => handleDelete(e.email)} className="text-xs bg-red-600 hover:bg-red-700 text-white font-semibold px-3 py-1 rounded-md">Confirmer</button>
+                      <button onClick={() => setConfirmingDelete(null)} className="text-xs bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold px-3 py-1 rounded-md">Annuler</button>
+                    </div>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }
