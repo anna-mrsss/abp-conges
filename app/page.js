@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { api } from "@/lib/api";
-import { toDate, daysInclusive, overlaps, fmt, MOIS, JOURS_SEMAINE, isValidEmail } from "@/lib/dates";
+import { toDate, workingDaysInclusive, overlaps, fmt, MOIS, JOURS_SEMAINE, isValidEmail } from "@/lib/dates";
 
 /* ---------- Logo (équerre de menuisier) ---------- */
 function Logo({ size = 40 }) {
@@ -355,7 +355,7 @@ function EmployeeDashboard({ employee, requests, closures, onLogout, refresh }) 
   const totals = useMemo(() => {
     let demandes = 0, valides = 0, attente = 0;
     myRequests.forEach((r) => {
-      const j = daysInclusive(r.dateDebut, r.dateFin);
+      const j = workingDaysInclusive(r.dateDebut, r.dateFin);
       if (r.statut !== "Refusé") demandes += j;
       if (r.statut === "Validé") valides += j;
       if (r.statut === "En attente") attente += j;
@@ -457,7 +457,7 @@ function EmployeeDashboard({ employee, requests, closures, onLogout, refresh }) 
           </div>
 
           {dateDebut && dateFin && toDate(dateFin) >= toDate(dateDebut) && (
-            <p className="text-xs text-slate-500 mb-2">Durée : {daysInclusive(dateDebut, dateFin)} jour(s)</p>
+            <p className="text-xs text-slate-500 mb-2">Durée : {workingDaysInclusive(dateDebut, dateFin)} jour(s) ouvré(s)</p>
           )}
           {liveClosure && (
             <p className="text-red-600 text-xs font-semibold mb-2">
@@ -495,7 +495,7 @@ function EmployeeDashboard({ employee, requests, closures, onLogout, refresh }) 
                     <td className="py-2 pr-4 text-slate-500 whitespace-nowrap">{r.horodateur}</td>
                     <td className="py-2 pr-4 whitespace-nowrap">{fmt(r.dateDebut)}</td>
                     <td className="py-2 pr-4 whitespace-nowrap">{fmt(r.dateFin)}</td>
-                    <td className="py-2 pr-4">{daysInclusive(r.dateDebut, r.dateFin)}</td>
+                    <td className="py-2 pr-4">{workingDaysInclusive(r.dateDebut, r.dateFin)}</td>
                     <td className="py-2 pr-4 text-slate-500">{r.commentaire || "—"}</td>
                     <td className="py-2 pr-4"><StatutBadge statut={r.statut} /></td>
                   </tr>
@@ -659,7 +659,7 @@ function DirectionDashboard({ requests, closures, onLogout, refresh, saveClosure
                       </td>
                       <td className="py-2 pr-4 whitespace-nowrap">{fmt(r.dateDebut)}</td>
                       <td className="py-2 pr-4 whitespace-nowrap">{fmt(r.dateFin)}</td>
-                      <td className="py-2 pr-4">{daysInclusive(r.dateDebut, r.dateFin)}</td>
+                      <td className="py-2 pr-4">{workingDaysInclusive(r.dateDebut, r.dateFin)}</td>
                       <td className="py-2 pr-4 text-slate-500 max-w-[160px]">{r.commentaire || "—"}</td>
                       <td className="py-2 pr-4"><ConflitBadge conflit={conflictCount(r) > 2} /></td>
                       <td className="py-2 pr-4"><StatutBadge statut={r.statut} /></td>
