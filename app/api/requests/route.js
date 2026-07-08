@@ -67,6 +67,20 @@ export async function POST(request) {
     );
   }
 
+  // Périodes de blocage temporaire (forte activité, inventaire...) : blocage serveur.
+  const blockingResult = await sql`SELECT * FROM blocking_periods`;
+  const blocking = blockingResult.rows.find((c) =>
+    overlaps(dateDebut, dateFin, c.date_debut.toISOString().slice(0, 10), c.date_fin.toISOString().slice(0, 10))
+  );
+  if (blocking) {
+    return NextResponse.json(
+      {
+        error: `Impossible : les congés sont temporairement bloqués sur cette période (${blocking.libelle || "Période de blocage"}, du ${blocking.date_debut.toISOString().slice(0, 10)} au ${blocking.date_fin.toISOString().slice(0, 10)}).`,
+      },
+      { status: 409 }
+    );
+  }
+
   // Doublon exact ou chevauchement avec une autre demande du même salarié.
   const mineResult = await sql`SELECT * FROM requests WHERE email = ${session.email}`;
   const overlapMine = mineResult.rows.find((r) =>
