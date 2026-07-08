@@ -1117,13 +1117,21 @@ export default function App() {
   const [blockingPeriods, setBlockingPeriods] = useState([]);
 
   const loadClosures = useCallback(async () => {
-    const res = await api.getClosures();
-    setClosures(res.closures);
+    try {
+      const res = await api.getClosures();
+      setClosures(res.closures);
+    } catch (e) {
+      console.error("Erreur chargement fermetures :", e);
+    }
   }, []);
 
   const loadBlockingPeriods = useCallback(async () => {
-    const res = await api.getBlockingPeriods();
-    setBlockingPeriods(res.blockingPeriods);
+    try {
+      const res = await api.getBlockingPeriods();
+      setBlockingPeriods(res.blockingPeriods);
+    } catch (e) {
+      console.error("Erreur chargement blocages :", e);
+    }
   }, []);
 
   const loadRequests = useCallback(async () => {
@@ -1141,13 +1149,15 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      await Promise.all([loadClosures(), loadBlockingPeriods()]);
       try {
+        await Promise.all([loadClosures(), loadBlockingPeriods()]);
         const me = await api.me();
         if (me.auth) {
           setAuth(me.auth);
           await loadRequests();
         }
+      } catch (e) {
+        console.error("Erreur au chargement initial :", e);
       } finally {
         setLoading(false);
       }
