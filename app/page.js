@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { api } from "@/lib/api";
-import { toDate, workingDaysInclusive, overlaps, fmt, MOIS, JOURS_SEMAINE, isValidEmail } from "@/lib/dates";
+import { toDate, workingDaysInclusive, overlaps, fmt, MOIS, JOURS_SEMAINE, isValidEmail, isNonWorkingDay, currentLeavePeriod } from "@/lib/dates";
 
 /* ---------- Logo (équerre de menuisier) ---------- */
 function Logo({ size = 40 }) {
@@ -41,7 +41,8 @@ function ConflitBadge({ conflit }) {
   );
 }
 
-function ReglesBanner({ closures }) {
+function ReglesBanner({ closures, blockingPeriods }) {
+  const period = currentLeavePeriod();
   return (
     <div className="bg-blue-900 text-white rounded-xl p-5 space-y-2 text-sm leading-relaxed">
       <p className="font-bold text-yellow-400 uppercase tracking-wide text-xs mb-2">
@@ -53,12 +54,23 @@ function ReglesBanner({ closures }) {
         <li className="flex gap-2"><span className="text-yellow-400">•</span> Les congés ne sont validés qu'après confirmation de la direction.</li>
         <li className="flex gap-2"><span className="text-yellow-400">•</span> Pas de congés pendant les périodes de fermeture de l'entreprise (été et hiver).</li>
       </ul>
+      <p className="pt-2 mt-2 border-t border-blue-700 font-semibold">📅 {period.message}</p>
       {closures.length > 0 && (
         <div className="pt-2 mt-2 border-t border-blue-700">
           <p className="font-semibold text-yellow-400 text-xs uppercase mb-1">Fermetures programmées</p>
           <ul className="space-y-1">
             {closures.map((c) => (
               <li key={c.id}>🔒 {c.libelle || "Fermeture"} : du {fmt(c.dateDebut)} au {fmt(c.dateFin)}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {blockingPeriods.length > 0 && (
+        <div className="pt-2 mt-2 border-t border-blue-700">
+          <p className="font-semibold text-yellow-400 text-xs uppercase mb-1">Périodes de blocage temporaire des congés</p>
+          <ul className="space-y-1">
+            {blockingPeriods.map((c) => (
+              <li key={c.id}>⛔ {c.libelle || "Blocage"} : du {fmt(c.dateDebut)} au {fmt(c.dateFin)}</li>
             ))}
           </ul>
         </div>
@@ -71,7 +83,7 @@ function ReglesBanner({ closures }) {
 }
 
 /* ================= LOGIN / ACCUEIL ================= */
-function LoginScreen({ closures, onAuthChange }) {
+function LoginScreen({ closures, blockingPeriods, onAuthChange }) {
   const [tab, setTab] = useState("salarie");
 
   return (
@@ -87,7 +99,7 @@ function LoginScreen({ closures, onAuthChange }) {
       </header>
 
       <main className="flex-1 max-w-5xl w-full mx-auto px-6 py-10 grid md:grid-cols-2 gap-8 items-start">
-        <ReglesBanner closures={closures} />
+        <ReglesBanner closures={closures} blockingPeriods={blockingPeriods} />
 
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="flex border-b border-slate-200">
@@ -339,7 +351,7 @@ function DirectionLoginForm({ onAuthChange }) {
 }
 
 /* ================= ESPACE SALARIÉ ================= */
-function EmployeeDashboard({ employee, requests, closures, onLogout, refresh }) {
+function EmployeeDashboard({ employee, requests, closures, blockingPeriods, onLogout, refresh }) {
   const [dateDebut, setDateDebut] = useState("");
   const [dateFin, setDateFin] = useState("");
   const [commentaire, setCommentaire] = useState("");
@@ -352,22 +364,30 @@ function EmployeeDashboard({ employee, requests, closures, onLogout, refresh }) 
     [requests]
   );
 
+  const period = useMemo(() => currentLeavePeriod(), []);
+
   const totals = useMemo(() => {
     let demandes = 0, valides = 0, attente = 0;
-    myRequests.forEach((r) => {
-      const j = workingDaysInclusive(r.dateDebut, r.dateFin);
-      if (r.statut !== "Refusé") demandes += j;
-      if (r.statut === "Validé") valides += j;
-      if (r.statut === "En attente") attente += j;
-    });
+    myRequests
+      .filter((r) => r.dateDebut >= period.startDate && r.dateDebut <= period.endDate)
+      .forEach((r) => {
+        const j = workingDaysInclusive(r.dateDebut, r.dateFin);
+        if (r.statut !== "Refusé") demandes += j;
+        if (r.statut === "Validé") valides += j;
+        if (r.statut === "En attente") attente += j;
+      });
     return { demandes, valides, attente };
-  }, [myRequests]);
+  }, [myRequests, period]);
 
   function overlappingClosure(dS, dE) {
     return closures.find((c) => overlaps(dS, dE, c.dateDebut, c.dateFin));
   }
+  function overlappingBlocking(dS, dE) {
+    return blockingPeriods.find((c) => overlaps(dS, dE, c.dateDebut, c.dateFin));
+  }
 
   const liveClosure = dateDebut && dateFin ? overlappingClosure(dateDebut, dateFin) : null;
+  const liveBlocking = dateDebut && dateFin ? overlappingBlocking(dateDebut, dateFin) : null;
 
   async function handleSubmit() {
     setFormError(""); setFormSuccess("");
@@ -413,12 +433,27 @@ function EmployeeDashboard({ employee, requests, closures, onLogout, refresh }) 
       </header>
 
       <main className="max-w-5xl mx-auto px-6 py-8 space-y-8">
+        <div className="bg-blue-900 text-white rounded-xl px-5 py-3 text-sm font-semibold">
+          📅 {period.message}
+        </div>
+
         {closures.length > 0 && (
           <div className="bg-slate-800 text-white rounded-xl px-5 py-3 text-sm">
             🔒 Pas de congés possibles pendant les fermetures de l'entreprise :{" "}
             {closures.map((c, i) => (
               <span key={c.id} className="font-semibold text-yellow-400">
                 {c.libelle || "Fermeture"} du {fmt(c.dateDebut)} au {fmt(c.dateFin)}{i < closures.length - 1 ? " — " : ""}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {blockingPeriods.length > 0 && (
+          <div className="bg-orange-600 text-white rounded-xl px-5 py-3 text-sm">
+            ⛔ Congés temporairement bloqués :{" "}
+            {blockingPeriods.map((c, i) => (
+              <span key={c.id} className="font-semibold">
+                {c.libelle || "Blocage"} du {fmt(c.dateDebut)} au {fmt(c.dateFin)}{i < blockingPeriods.length - 1 ? " — " : ""}
               </span>
             ))}
           </div>
@@ -462,6 +497,11 @@ function EmployeeDashboard({ employee, requests, closures, onLogout, refresh }) 
           {liveClosure && (
             <p className="text-red-600 text-xs font-semibold mb-2">
               ⚠ Cette période chevauche une fermeture de l'entreprise ({liveClosure.libelle || "Fermeture"}, du {fmt(liveClosure.dateDebut)} au {fmt(liveClosure.dateFin)}).
+            </p>
+          )}
+          {liveBlocking && (
+            <p className="text-red-600 text-xs font-semibold mb-2">
+              ⚠ Les congés sont temporairement bloqués sur cette période ({liveBlocking.libelle || "Blocage"}, du {fmt(liveBlocking.dateDebut)} au {fmt(liveBlocking.dateFin)}).
             </p>
           )}
           {formError && <p className="text-red-600 text-sm mb-2">{formError}</p>}
@@ -510,7 +550,7 @@ function EmployeeDashboard({ employee, requests, closures, onLogout, refresh }) 
 }
 
 /* ================= ESPACE DIRECTION ================= */
-function DirectionDashboard({ requests, closures, onLogout, refresh, saveClosures }) {
+function DirectionDashboard({ requests, closures, blockingPeriods, onLogout, refresh, saveClosures, saveBlockingPeriods }) {
   const [tab, setTab] = useState("demandes");
   const [filter, setFilter] = useState("Tous");
   const [selectedIds, setSelectedIds] = useState([]);
@@ -580,7 +620,7 @@ function DirectionDashboard({ requests, closures, onLogout, refresh, saveClosure
               onClick={() => setTab(t)}
               className={`px-4 py-2.5 text-sm font-semibold rounded-t-lg ${tab === t ? "bg-white border border-b-0 border-slate-200 text-blue-900" : "text-slate-400 hover:text-slate-600"}`}
             >
-              {t === "demandes" ? "Demandes" : t === "calendrier" ? "Calendrier" : t === "fermetures" ? "Fermetures" : "Salariés"}
+              {t === "demandes" ? "Demandes" : t === "calendrier" ? "Calendrier" : t === "fermetures" ? "Fermetures & blocages" : "Salariés"}
             </button>
           ))}
         </div>
@@ -678,8 +718,13 @@ function DirectionDashboard({ requests, closures, onLogout, refresh, saveClosure
           </div>
         )}
 
-        {tab === "calendrier" && <CalendarView requests={requests} closures={closures} />}
-        {tab === "fermetures" && <ClosuresPanel closures={closures} saveClosures={saveClosures} />}
+        {tab === "calendrier" && <CalendarView requests={requests} closures={closures} blockingPeriods={blockingPeriods} />}
+        {tab === "fermetures" && (
+          <div className="space-y-6">
+            <ClosuresPanel closures={closures} saveClosures={saveClosures} />
+            <BlockingPeriodsPanel blockingPeriods={blockingPeriods} saveBlockingPeriods={saveBlockingPeriods} />
+          </div>
+        )}
         {tab === "salaries" && <EmployeesPanel />}
       </main>
     </div>
@@ -815,7 +860,7 @@ function EmployeesPanel() {
   );
 }
 
-function CalendarView({ requests, closures }) {
+function CalendarView({ requests, closures, blockingPeriods }) {
   const today = new Date();
   const [cursor, setCursor] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
 
@@ -838,6 +883,9 @@ function CalendarView({ requests, closures }) {
   function closureOnDay(ds) {
     return closures.find((c) => overlaps(ds, ds, c.dateDebut, c.dateFin));
   }
+  function blockingOnDay(ds) {
+    return blockingPeriods.find((c) => overlaps(ds, ds, c.dateDebut, c.dateFin));
+  }
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-6">
@@ -847,10 +895,14 @@ function CalendarView({ requests, closures }) {
         <button onClick={() => setCursor(new Date(year, month + 1, 1))} className="text-slate-500 hover:text-blue-900 text-sm px-2">▶</button>
       </div>
 
-      <div className="flex gap-4 mb-3 text-xs text-slate-500">
+      <div className="flex gap-4 mb-3 text-xs text-slate-500 flex-wrap">
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-700 inline-block" /> Validé</span>
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-yellow-400 inline-block" /> En attente</span>
         <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-slate-400 inline-block" /> Fermeture</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-orange-400 inline-block" /> Blocage temporaire</span>
+        <span className="flex items-center gap-1">
+          <span className="w-3 h-3 rounded-sm inline-block" style={{ backgroundImage: "repeating-linear-gradient(45deg, #cbd5e1 0, #cbd5e1 2px, #f1f5f9 2px, #f1f5f9 5px)" }} /> Week-end / jour férié
+        </span>
       </div>
 
       <div className="grid grid-cols-7 gap-1 text-xs text-slate-400 font-semibold mb-1">
@@ -861,12 +913,26 @@ function CalendarView({ requests, closures }) {
           if (d === null) return <div key={i} className="min-h-[80px]" />;
           const ds = dateStr(d);
           const closure = closureOnDay(ds);
-          const valides = peopleOnDay(ds, "Validé");
-          const attente = peopleOnDay(ds, "En attente");
+          const blocking = blockingOnDay(ds);
+          const nonWorking = isNonWorkingDay(ds);
+          // Sur les jours non travaillés (week-ends, jours fériés), on n'affiche aucun
+          // congé : ces jours ne sont pas décomptés, donc pas de nom de salarié dessus.
+          const valides = nonWorking ? [] : peopleOnDay(ds, "Validé");
+          const attente = nonWorking ? [] : peopleOnDay(ds, "En attente");
+          const hatchStyle = nonWorking && !closure
+            ? { backgroundImage: "repeating-linear-gradient(45deg, #e2e8f0 0, #e2e8f0 3px, #f8fafc 3px, #f8fafc 8px)" }
+            : undefined;
           return (
-            <div key={i} className={`min-h-[80px] rounded-lg border p-1.5 ${closure ? "bg-slate-100 border-slate-300" : "border-slate-200"}`}>
+            <div
+              key={i}
+              style={hatchStyle}
+              className={`min-h-[80px] rounded-lg border p-1.5 ${
+                closure ? "bg-slate-100 border-slate-300" : blocking ? "bg-orange-50 border-orange-200" : nonWorking ? "border-slate-200" : "border-slate-200"
+              }`}
+            >
               <p className="text-xs font-semibold text-slate-500 mb-1">{d}</p>
               {closure && <p className="text-[10px] text-slate-500 mb-1">🔒 {closure.libelle || "Fermeture"}</p>}
+              {!closure && blocking && <p className="text-[10px] text-orange-700 mb-1">⛔ {blocking.libelle || "Blocage"}</p>}
               <div className="flex flex-wrap gap-1">
                 {valides.map((r) => (
                   <span key={r.id} title={`${r.prenom} ${r.nom} — Validé`} className="text-[10px] font-bold bg-blue-700 text-white rounded px-1">
@@ -882,6 +948,85 @@ function CalendarView({ requests, closures }) {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+function BlockingPeriodsPanel({ blockingPeriods, saveBlockingPeriods }) {
+  const [dateDebut, setDateDebut] = useState("");
+  const [dateFin, setDateFin] = useState("");
+  const [libelle, setLibelle] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function addBlocking() {
+    setError("");
+    if (!dateDebut || !dateFin) {
+      setError("Merci de renseigner une date de début et une date de fin.");
+      return;
+    }
+    if (toDate(dateFin) < toDate(dateDebut)) {
+      setError("La date de fin doit être postérieure ou égale à la date de début.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.addBlockingPeriod({ dateDebut, dateFin, libelle: libelle.trim() });
+      await saveBlockingPeriods();
+      setDateDebut(""); setDateFin(""); setLibelle("");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeBlocking(id) {
+    await api.deleteBlockingPeriod(id);
+    await saveBlockingPeriods();
+  }
+
+  return (
+    <div className="grid md:grid-cols-2 gap-6">
+      <div className="bg-white rounded-xl border border-slate-200 p-6">
+        <h2 className="font-bold text-blue-900 mb-1">Ajouter une période de blocage temporaire</h2>
+        <p className="text-sm text-slate-500 mb-4">
+          À utiliser pour interdire temporairement les congés (forte activité, inventaire…), sans que ce soit une fermeture officielle de l'entreprise.
+        </p>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">Libellé (ex : Période de forte activité, Inventaire)</label>
+            <input value={libelle} onChange={(e) => setLibelle(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Début</label>
+              <input type="date" value={dateDebut} onChange={(e) => setDateDebut(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600" />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Fin</label>
+              <input type="date" value={dateFin} onChange={(e) => setDateFin(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600" />
+            </div>
+          </div>
+          {error && <p className="text-red-600 text-xs">{error}</p>}
+          <button disabled={busy} onClick={addBlocking} className="bg-orange-600 hover:bg-orange-700 text-white font-semibold px-4 py-2 rounded-lg text-sm disabled:opacity-60">
+            {busy ? "Ajout…" : "Ajouter le blocage"}
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-slate-200 p-6">
+        <h2 className="font-bold text-blue-900 mb-4">Blocages temporaires en cours</h2>
+        {blockingPeriods.length === 0 && <p className="text-slate-400 text-sm">Aucun blocage temporaire enregistré.</p>}
+        <ul className="space-y-2">
+          {blockingPeriods.map((c) => (
+            <li key={c.id} className="flex items-center justify-between bg-orange-50 rounded-lg px-3 py-2 text-sm">
+              <span>⛔ <span className="font-semibold">{c.libelle || "Blocage"}</span> — du {fmt(c.dateDebut)} au {fmt(c.dateFin)}</span>
+              <button onClick={() => removeBlocking(c.id)} className="text-red-600 hover:text-red-700 text-xs font-semibold">Supprimer</button>
+            </li>
+          ))}
+        </ul>
       </div>
     </div>
   );
@@ -969,10 +1114,16 @@ export default function App() {
   const [auth, setAuth] = useState(null);
   const [requests, setRequests] = useState([]);
   const [closures, setClosures] = useState([]);
+  const [blockingPeriods, setBlockingPeriods] = useState([]);
 
   const loadClosures = useCallback(async () => {
     const res = await api.getClosures();
     setClosures(res.closures);
+  }, []);
+
+  const loadBlockingPeriods = useCallback(async () => {
+    const res = await api.getBlockingPeriods();
+    setBlockingPeriods(res.blockingPeriods);
   }, []);
 
   const loadRequests = useCallback(async () => {
@@ -985,12 +1136,12 @@ export default function App() {
   }, []);
 
   const loadAll = useCallback(async () => {
-    await Promise.all([loadClosures(), loadRequests()]);
-  }, [loadClosures, loadRequests]);
+    await Promise.all([loadClosures(), loadBlockingPeriods(), loadRequests()]);
+  }, [loadClosures, loadBlockingPeriods, loadRequests]);
 
   useEffect(() => {
     (async () => {
-      await loadClosures();
+      await Promise.all([loadClosures(), loadBlockingPeriods()]);
       try {
         const me = await api.me();
         if (me.auth) {
@@ -1001,7 +1152,7 @@ export default function App() {
         setLoading(false);
       }
     })();
-  }, [loadClosures, loadRequests]);
+  }, [loadClosures, loadBlockingPeriods, loadRequests]);
 
   useEffect(() => {
     if (!auth) return;
@@ -1029,16 +1180,24 @@ export default function App() {
   }
 
   if (!auth) {
-    return <LoginScreen closures={closures} onAuthChange={handleAuthChange} />;
+    return <LoginScreen closures={closures} blockingPeriods={blockingPeriods} onAuthChange={handleAuthChange} />;
   }
 
   if (auth.role === "employee") {
     return (
-      <EmployeeDashboard employee={auth} requests={requests} closures={closures} onLogout={handleLogout} refresh={loadAll} />
+      <EmployeeDashboard employee={auth} requests={requests} closures={closures} blockingPeriods={blockingPeriods} onLogout={handleLogout} refresh={loadAll} />
     );
   }
 
   return (
-    <DirectionDashboard requests={requests} closures={closures} onLogout={handleLogout} refresh={loadAll} saveClosures={loadClosures} />
+    <DirectionDashboard
+      requests={requests}
+      closures={closures}
+      blockingPeriods={blockingPeriods}
+      onLogout={handleLogout}
+      refresh={loadAll}
+      saveClosures={loadClosures}
+      saveBlockingPeriods={loadBlockingPeriods}
+    />
   );
 }
